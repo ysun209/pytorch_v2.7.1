@@ -174,6 +174,29 @@ if(HIP_FOUND)
 
     # roctx is part of roctracer
     find_library(ROCM_ROCTX_LIB roctx64 HINTS ${ROCM_PATH}/lib)
+    find_library(ROCM_ROCTRACER_LIB roctracer64 HINTS ${ROCM_PATH}/lib)
+    
+    # If roctx64 is not found, try alternative names
+    if(NOT ROCM_ROCTX_LIB)
+        find_library(ROCM_ROCTX_LIB roctx HINTS ${ROCM_PATH}/lib)
+    endif()
+    
+    # If roctracer64 is not found, try alternative names  
+    if(NOT ROCM_ROCTRACER_LIB)
+        find_library(ROCM_ROCTRACER_LIB roctracer HINTS ${ROCM_PATH}/lib)
+    endif()
+    
+    if(ROCM_ROCTX_LIB)
+        message(STATUS "Found ROCTX library: ${ROCM_ROCTX_LIB}")
+    else()
+        message(WARNING "ROCTX library not found")
+    endif()
+    
+    if(ROCM_ROCTRACER_LIB)
+        message(STATUS "Found ROCTRACER library: ${ROCM_ROCTRACER_LIB}")
+    else()
+        message(WARNING "ROCTRACER library not found")
+    endif()
 
     set(PROJECT_RANDOM_BINARY_DIR "${PROJECT_BINARY_DIR}")
 

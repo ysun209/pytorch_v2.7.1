@@ -1494,6 +1494,17 @@ target_link_libraries(torch_cpu PUBLIC c10)
 target_link_libraries(torch_cpu PUBLIC ${Caffe2_PUBLIC_DEPENDENCY_LIBS})
 target_link_libraries(torch_cpu PRIVATE ${Caffe2_DEPENDENCY_LIBS})
 target_link_libraries(torch_cpu PRIVATE ${Caffe2_DEPENDENCY_WHOLE_LINK_LIBS})
+
+# Link ROCTRACER libraries for HIP support
+if(USE_ROCM)
+  if(ROCM_ROCTX_LIB)
+    target_link_libraries(torch_cpu PRIVATE ${ROCM_ROCTX_LIB})
+  endif()
+  if(ROCM_ROCTRACER_LIB)
+    target_link_libraries(torch_cpu PRIVATE ${ROCM_ROCTRACER_LIB})
+  endif()
+endif()
+
 if(USE_MPI)
   target_link_libraries(torch_cpu PRIVATE MPI::MPI_CXX)
 endif()

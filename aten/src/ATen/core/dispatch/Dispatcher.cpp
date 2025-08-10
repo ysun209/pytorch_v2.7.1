@@ -8,7 +8,11 @@
 #include <ATen/Context.h>
 #include <nvtx3/nvtx3.hpp>
 #ifdef USE_ROCM
-#include <roctracer/roctx.h>
+// Use weak symbols for ROCTX functions to avoid link errors if not available
+extern "C" {
+__attribute__((weak)) int roctxRangePushA(const char* message);
+__attribute__((weak)) int roctxRangePop(void);
+}
 #endif
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -208,7 +212,10 @@ A10LoggingGuard::A10LoggingGuard(
         std::to_string(rnd);
 #ifdef USE_ROCM
     if (this->dispatch_key == DispatchKey::HIP) {
-      ::roctxRangePushA(combined_id.c_str());
+      // Only call roctx if the function is available (weak symbol)
+      if (roctxRangePushA != nullptr) {
+        roctxRangePushA(combined_id.c_str());
+      }
     } else
 #endif
     {
@@ -231,7 +238,10 @@ A10LoggingGuard::~A10LoggingGuard() {
       this->dispatch_key == DispatchKey::HIP) {
 #ifdef USE_ROCM
     if (this->dispatch_key == DispatchKey::HIP) {
-      ::roctxRangePop();
+      // Only call roctx if the function is available (weak symbol)
+      if (roctxRangePop != nullptr) {
+        roctxRangePop();
+      }
     } else
 #endif
     {

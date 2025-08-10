@@ -162,7 +162,12 @@ if(USE_ROCM)
       __HIP_PLATFORM_AMD__
       )
     if(NOT WIN32)
-      list(APPEND TORCH_PYTHON_LINK_LIBRARIES ${ROCM_ROCTX_LIB})
+      if(ROCM_ROCTX_LIB)
+        list(APPEND TORCH_PYTHON_LINK_LIBRARIES ${ROCM_ROCTX_LIB})
+      endif()
+      if(ROCM_ROCTRACER_LIB)
+        list(APPEND TORCH_PYTHON_LINK_LIBRARIES ${ROCM_ROCTRACER_LIB})
+      endif()
     endif()
 endif()
 
