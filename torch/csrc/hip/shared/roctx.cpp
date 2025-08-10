@@ -2,13 +2,11 @@
 #include <wchar.h> // _wgetenv for roctx
 #endif
 
+#include <c10/util/Exception.h>
 #ifdef USE_ROCM
 #include <roctracer/roctx.h>
 #include <hip/hip_runtime.h>
-#else // USE_ROCM
-#include <c10/util/Exception.h>
 #endif // USE_ROCM
-#include <c10/cuda/CUDAException.h>
 #include <torch/csrc/utils/pybind.h>
 
 namespace torch::hip::shared {
@@ -27,10 +25,11 @@ static void device_callback_range_end(void* userData) {
 }
 
 static void device_roctxRangeEnd(void* handle, std::intptr_t stream) {
-  // Note: Using CUDA check macro since HIP check may not be available
-  TORCH_CHECK(hipLaunchHostFunc(
-      (hipStream_t)stream, device_callback_range_end, handle) == hipSuccess,
-      "Failed to launch HIP host function for range end");
+  // Use TORCH_CHECK since we don't have HIP exception macros readily available
+  auto result = hipLaunchHostFunc(
+      (hipStream_t)stream, device_callback_range_end, handle);
+  TORCH_CHECK(result == hipSuccess,
+      "Failed to launch HIP host function for range end: ", result);
 }
 
 static void device_callback_range_start(void* userData) {
@@ -42,11 +41,10 @@ static void* device_roctxRangeStart(const char* msg, std::intptr_t stream) {
   RangeHandle* handle = (RangeHandle*)calloc(sizeof(RangeHandle), 1);
   handle->msg = strdup(msg);
   handle->id = 0;
-  TORCH_CHECK(
-      hipLaunchHostFunc(
-          (hipStream_t)stream, device_callback_range_start, (void*)handle) ==
-      hipSuccess,
-      "Failed to launch HIP host function for range start");
+  auto result = hipLaunchHostFunc(
+      (hipStream_t)stream, device_callback_range_start, (void*)handle);
+  TORCH_CHECK(result == hipSuccess,
+      "Failed to launch HIP host function for range start: ", result);
   return handle;
 }
 
