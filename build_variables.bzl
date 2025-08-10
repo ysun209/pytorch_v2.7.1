@@ -781,6 +781,7 @@ libtorch_python_cuda_core_sources = [
     "torch/csrc/cuda/MemPool.cpp",
     "torch/csrc/cuda/shared/cudart.cpp",
     "torch/csrc/cuda/shared/nvtx.cpp",
+    "torch/csrc/hip/shared/roctx.cpp",
     "torch/csrc/cuda/utils.cpp",
     "torch/csrc/cuda/GdsFile.cpp",
 ]

@@ -7,6 +7,9 @@
 // Patch
 #include <ATen/Context.h>
 #include <nvtx3/nvtx3.hpp>
+#ifdef USE_ROCM
+#include <roctracer/roctx.h>
+#endif
 #include <sys/syscall.h>
 #include <unistd.h>
 #include <zlib.h>
@@ -191,10 +194,11 @@ A10LoggingGuard::A10LoggingGuard(
   this->sequence = log_sequence;
 
   
-  // Cuda Push
+  // Cuda/HIP Push
 #if CUDA_TIME_MEASUREMENT
   if (this->trace_type == A10LoggingTraceType::CALL ||
-      this->dispatch_key == DispatchKey::CUDA) {
+      this->dispatch_key == DispatchKey::CUDA ||
+      this->dispatch_key == DispatchKey::HIP) {
     uint64_t rnd = dist(rng);
     this->random_suffix = rnd;
     std::string combined_id =
@@ -202,7 +206,14 @@ A10LoggingGuard::A10LoggingGuard(
         std::to_string(this->sequence) + "_" +
         std::to_string(this->nesting_value) + "_" +
         std::to_string(rnd);
-    ::nvtxRangePushA(combined_id.c_str());
+#ifdef USE_ROCM
+    if (this->dispatch_key == DispatchKey::HIP) {
+      ::roctxRangePushA(combined_id.c_str());
+    } else
+#endif
+    {
+      ::nvtxRangePushA(combined_id.c_str());
+    }
   }
 #endif
 }
@@ -213,11 +224,19 @@ A10LoggingGuard::~A10LoggingGuard() {
   this->timestamp_end =
       std::chrono::duration_cast<std::chrono::microseconds>(now).count();
 
-  // Cuda Pop
+  // Cuda/HIP Pop
 #if CUDA_TIME_MEASUREMENT
   if (this->trace_type == A10LoggingTraceType::CALL ||
-      this->dispatch_key == DispatchKey::CUDA) {
-    ::nvtxRangePop();
+      this->dispatch_key == DispatchKey::CUDA ||
+      this->dispatch_key == DispatchKey::HIP) {
+#ifdef USE_ROCM
+    if (this->dispatch_key == DispatchKey::HIP) {
+      ::roctxRangePop();
+    } else
+#endif
+    {
+      ::nvtxRangePop();
+    }
   }
 #endif
 
