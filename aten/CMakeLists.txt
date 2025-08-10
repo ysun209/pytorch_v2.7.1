@@ -58,6 +58,10 @@ set(TH_CPU_INCLUDE
   ${CMAKE_BINARY_DIR}/aten/src)
 list(APPEND ATen_CPU_INCLUDE ${TH_CPU_INCLUDE})
 
+if(USE_CUDA)
+  list(APPEND ATen_CPU_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/NVTX/c/include)
+endif()
+
 if(USE_VULKAN)
   list(APPEND ATen_CPU_INCLUDE ${CMAKE_BINARY_DIR}/vulkan ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/VulkanMemoryAllocator)
 endif()

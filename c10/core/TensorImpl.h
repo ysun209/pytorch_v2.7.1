@@ -193,11 +193,11 @@ struct C10_API AutogradMetaFactory {
 C10_API void SetAutogradMetaFactory(AutogradMetaFactory* factory);
 C10_API AutogradMetaFactory* GetAutogradMetaFactory();
 
-struct C10_API AutogradMetaFactoryRegisterer {
-  explicit AutogradMetaFactoryRegisterer(AutogradMetaFactory* factory) {
-    SetAutogradMetaFactory(factory);
-  }
-};
+struct C10_API AutogradMetaFactoryRegisterer{
+    explicit AutogradMetaFactoryRegisterer(AutogradMetaFactory * factory){
+        SetAutogradMetaFactory(factory);
+} // namespace impl
+}; // namespace c10
 
 } // namespace impl
 
@@ -1834,6 +1834,10 @@ struct C10_API TensorImpl : public c10::intrusive_ptr_target {
         MemoryFormat::Contiguous); // calls refresh_contiguous()
   }
 
+  C10_ALWAYS_INLINE const impl::SizesAndStrides& sizes_and_strides() {
+    return sizes_and_strides_;
+  }
+
   /**
    * Set the sizes and strides of a tensor.
    *
@@ -3022,6 +3026,9 @@ struct C10_API TensorImpl : public c10::intrusive_ptr_target {
   // INVARIANT: extra_meta_->named_tensor_meta_ != nullptr  <==>
   // key_set_.has(DispatchKey::Named)
   DispatchKeySet key_set_;
+
+ public:
+  uint64_t unique_id;
 
  private:
   // C10_TensorImpl_Size_Check_Dummy_Class needs to be friends with

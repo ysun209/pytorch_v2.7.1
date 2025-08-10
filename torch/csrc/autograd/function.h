@@ -161,6 +161,9 @@ struct TORCH_API Node : std::enable_shared_from_this<Node> {
     // Keep track of backward pass for rocblas.
     at::ROCmBackwardPassGuard in_backward;
 #endif
+    
+    // Our patch to keep track whether it is in backward pass
+    at::A10BackwardPassGuard a10_in_backward;
 
     auto step_callbacks =
         at::getStepCallbacksUnlessEmpty(at::RecordScope::BACKWARD_FUNCTION);

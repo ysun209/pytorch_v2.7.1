@@ -22,6 +22,8 @@
 #include <iostream>
 #endif
 
+#include <variant>
+
 namespace c10 {
 
 TORCH_API bool show_dispatch_trace();
@@ -36,6 +38,60 @@ struct DispatchTraceNestingGuard {
   ~DispatchTraceNestingGuard() {
     dispatch_trace_nesting_decr();
   }
+};
+
+// Patch start
+
+struct TORCH_API A10TraceNestingGuard {
+  A10TraceNestingGuard();
+  ~A10TraceNestingGuard();
+  static int16_t nesting_level();
+};
+
+enum A10LoggingTraceType { CALL = 0, REDISPATCH, CALL_BOXED, REDISPATCH_BOXED };
+
+class TORCH_API A10LoggingGuard {
+  A10TraceNestingGuard trace_nesting_guard;
+  A10LoggingTraceType trace_type;
+  std::string op_name;
+  DispatchKey dispatch_key;
+  uint16_t autograd_mode;
+  int16_t nesting_value;
+  uint16_t in_backward_pass;
+  pid_t tid;
+  int64_t timestamp_start;
+  int64_t timestamp_end;
+  int64_t sequence;
+  uint64_t random_suffix;
+  std::string schema_str;
+  std::vector<std::pair<uint64_t, std::string>> input_types;
+  std::vector<std::pair<uint64_t, std::vector<int64_t>>> input_sizes;
+  std::vector<std::pair<uint64_t, std::vector<int64_t>>> input_strides;
+
+  std::vector<std::pair<uint64_t, std::string>> output_types;
+  std::vector<std::pair<uint64_t, std::vector<int64_t>>> output_sizes;
+  std::vector<std::pair<uint64_t, std::vector<int64_t>>> output_strides;
+
+  void _recordInputTensorShapeAndType(
+      const uint64_t tensorID,
+      const at::Tensor& value);
+
+  void _recordOutputTensorShapeAndType(
+      const uint64_t tensorID,
+      const at::Tensor& value);
+
+  std::vector<std::uint8_t> serialize();
+
+ public:
+  A10LoggingGuard(
+      const A10LoggingTraceType call_type,
+      const std::string& op_name,
+      const DispatchKeySet& dispatchKeySet);
+  ~A10LoggingGuard();
+  void recordInputs(
+      at::RecordFunction::schema_ref_t schema_ref,
+      c10::ArrayRef<const c10::IValue> args);
+  void recordOutputs(std::vector<c10::IValue>&& outputs);
 };
 
 class TORCH_API OperatorHandle;
@@ -179,6 +235,13 @@ class TORCH_API Dispatcher final {
   static Return callWithDispatchKeySlowPath(
       const TypedOperatorHandle<Return(Args...)>& op,
       at::StepCallbacks& stepCallbacks,
+      DispatchKeySet dispatchKeySet,
+      const KernelFunction& kernel,
+      Args... args);
+
+  template <class Return, class... Args>
+  static Return a10CallSlowPath(
+      const TypedOperatorHandle<Return(Args...)>& op,
       DispatchKeySet dispatchKeySet,
       const KernelFunction& kernel,
       Args... args);
@@ -759,6 +822,52 @@ inline Return Dispatcher::callWithDispatchKeySlowPath(
       op, dispatchKeySet, std::forward<Args>(args)...);
 }
 
+#define PROFILE_A10_OPS 1
+#define CAPTURE_OUTPUT 1
+template <class Return, class... Args>
+inline Return Dispatcher::a10CallSlowPath(
+    const TypedOperatorHandle<Return(Args...)>& op,
+    DispatchKeySet dispatchKeySet,
+    const KernelFunction& kernel,
+    Args... args) {
+  // Our patch starts here
+  auto& schema = op.schema();
+  auto schema_ref = std::reference_wrapper<const FunctionSchema>(schema);
+
+  A10LoggingGuard logging_guard(
+      A10LoggingTraceType::CALL, toString(op.operator_name()), dispatchKeySet);
+
+  constexpr auto num_boxed_args = impl::boxed_size<Args...>();
+  if constexpr (num_boxed_args != 0) {
+    alignas(IValue) std::byte boxedArgs[num_boxed_args * sizeof(IValue)];
+
+    IValue* boxedArgsPtr = reinterpret_cast<IValue*>(boxedArgs);
+    impl::boxArgsToStack(boxedArgsPtr, args...);
+
+    logging_guard.recordInputs(
+        schema_ref,
+        c10::ArrayRef<const c10::IValue>(
+            reinterpret_cast<IValue*>(boxedArgs), num_boxed_args));
+
+    boxedArgsPtr = reinterpret_cast<IValue*>(boxedArgs);
+    for (size_t ii = 0; ii < num_boxed_args; ++ii) {
+      (boxedArgsPtr + ii)->~IValue();
+    }
+  }
+
+#if CAPTURE_OUTPUT
+  detail::CaptureKernelCall<Return> captureKernelCall(
+      kernel, op, dispatchKeySet, std::forward<Args>(args)...);
+  logging_guard.recordOutputs(captureKernelCall.getOutputs());
+  // Releases the captured output to return to caller.
+  return std::move(captureKernelCall).release();
+#else
+  // keeping the guard alive while executing the kernel
+  return kernel.template call<Return, Args...>(
+      op, dispatchKeySet, std::forward<Args>(args)...);
+#endif
+}
+
 // See [Note: Argument forwarding in the dispatcher] for why Args doesn't use &&
 template <class Return, class... Args>
 C10_ALWAYS_INLINE_UNLESS_MOBILE Return Dispatcher::call(
@@ -767,6 +876,7 @@ C10_ALWAYS_INLINE_UNLESS_MOBILE Return Dispatcher::call(
   auto dispatchKeySet =
       op.operatorDef_->op.dispatchKeyExtractor()
           .template getDispatchKeySetUnboxed<Args...>(args...);
+
 #if defined(HAS_TORCH_SHOW_DISPATCH_TRACE) || !defined(NDEBUG)
   DispatchTraceNestingGuard debug_guard;
   if (show_dispatch_trace()) {
@@ -808,8 +918,13 @@ C10_ALWAYS_INLINE_UNLESS_MOBILE Return Dispatcher::call(
         op, dispatchKeySet, std::forward<Args>(args)...);
   }
 #else
+#if PROFILE_A10_OPS
+  return a10CallSlowPath<Return, Args...>(
+      op, dispatchKeySet, kernel, std::forward<Args>(args)...);
+#else
   return kernel.template call<Return, Args...>(
       op, dispatchKeySet, std::forward<Args>(args)...);
+#endif
 #endif // FBCODE_CAFFE2
 }
 
@@ -820,6 +935,12 @@ inline Return Dispatcher::redispatch(
     DispatchKeySet currentDispatchKeySet,
     Args... args) const {
   // do not use RecordFunction on redispatch
+#if PROFILE_A10_OPS
+  A10LoggingGuard logging_guard(
+      A10LoggingTraceType::REDISPATCH,
+      toString(op.operator_name()),
+      currentDispatchKeySet);
+#endif
 #if defined(HAS_TORCH_SHOW_DISPATCH_TRACE) || !defined(NDEBUG)
   DispatchTraceNestingGuard debug_guard;
   if (show_dispatch_trace()) {
@@ -840,6 +961,19 @@ inline void Dispatcher::callBoxed(const OperatorHandle& op, Stack* stack)
   const auto& entry = op.operatorDef_->op;
   auto dispatchKeySet =
       entry.dispatchKeyExtractor().getDispatchKeySetBoxed(stack);
+// Capture Boxed Call
+#if PROFILE_A10_OPS
+  A10LoggingGuard logging_guard(
+      A10LoggingTraceType::CALL_BOXED,
+      toString(op.operator_name()),
+      dispatchKeySet);
+  auto& schema = op.schema();
+  auto schema_ref = std::reference_wrapper<const FunctionSchema>(schema);
+  logging_guard.recordInputs(
+      schema_ref,
+      c10::ArrayRef<const c10::IValue>(stack->data(), stack->size()));
+#endif
+
 #if defined(HAS_TORCH_SHOW_DISPATCH_TRACE) || !defined(NDEBUG)
   DispatchTraceNestingGuard debug_guard;
   if (show_dispatch_trace()) {
@@ -905,6 +1039,12 @@ inline void Dispatcher::redispatchBoxed(
     const OperatorHandle& op,
     DispatchKeySet dispatchKeySet,
     Stack* stack) const {
+#if PROFILE_A10_OPS
+  A10LoggingGuard logging_guard(
+      A10LoggingTraceType::REDISPATCH_BOXED,
+      toString(op.operator_name()),
+      dispatchKeySet);
+#endif
   // note: this doesn't need the mutex because write operations on the list keep
   // iterators intact.
   const auto& entry = op.operatorDef_->op;

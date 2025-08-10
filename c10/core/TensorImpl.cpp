@@ -27,6 +27,8 @@ C10_DEFINE_int64(
 
 namespace c10 {
 
+static std::atomic<uint64_t> global_id_counter;
+
 const char* const TensorImpl::err_msg_tensor_metadata_change_not_allowed =
     "is not allowed on a Tensor created from .data or .detach().\n"
     "If your intent is to change the metadata of a Tensor (such as sizes / strides / storage / storage_offset)\n"
@@ -102,7 +104,7 @@ TensorImpl::TensorImpl(
 
 // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
 TensorImpl::TensorImpl(
-    ImplType type,
+    ImplType /*type*/,
     Storage&& storage,
     DispatchKeySet key_set,
     const caffe2::TypeMeta data_type)
@@ -116,6 +118,7 @@ TensorImpl::TensorImpl(
   if (!is_inference()) {
     version_counter_ = VariableVersion(/*version=*/0);
   }
+  unique_id = global_id_counter.fetch_add(1, std::memory_order_relaxed);
 }
 
 TensorImpl::TensorImpl(
@@ -175,6 +178,7 @@ TensorImpl::TensorImpl(
   }
   // we would also like to check that non-cpu devices have an index, but some
   // Caffe2 operators create Storages with default devices.
+  unique_id = global_id_counter.fetch_add(1, std::memory_order_relaxed);
 }
 
 void TensorImpl::_change_backend_component_keys(c10::Device device) {
@@ -570,6 +574,10 @@ void TensorImpl::copy_generic_tensor_metadata(
   dest_impl->is_wrapped_number_ = src_impl->is_wrapped_number_;
   dest_impl->reserved_ = src_impl->reserved_;
   dest_impl->numel_ = src_impl->numel_;
+
+  // We need to copy the unique_id, hopefully this works
+  dest_impl->unique_id = src_impl->unique_id;
+
   if (src_impl->extra_meta_ != nullptr) {
     dest_impl->extra_meta_ = src_impl->extra_meta_->clone();
   } else if (dest_impl->extra_meta_ != nullptr) {
@@ -795,6 +803,7 @@ void TensorImpl::ShareData(const TensorImpl& src) {
   storage_ = src.storage();
   data_type_ = src.dtype();
   device_opt_ = src.device_opt();
+  std::cout << "share data " << unique_id << std::endl;
   storage_offset_ = src.storage_offset();
 }
 
@@ -816,6 +825,7 @@ void TensorImpl::ShareExternalPointer(
     storage_.UniqueStorageShareExternalPointer(std::move(data_ptr), size_bytes);
     data_type_ = data_type;
     device_opt_ = storage_.device();
+    std::cout << "Unique copy " << unique_id << std::endl;
     storage_offset_ = 0;
   } else {
     // Create a new Storage
@@ -827,6 +837,7 @@ void TensorImpl::ShareExternalPointer(
         /*resizable=*/false);
     data_type_ = data_type;
     device_opt_ = storage_.device();
+    std::cout << "n Unique copy " << unique_id << std::endl;
     storage_offset_ = 0;
   }
 }

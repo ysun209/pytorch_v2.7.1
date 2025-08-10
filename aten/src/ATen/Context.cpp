@@ -340,7 +340,7 @@ at::BlasBackend Context::blasPreferredBackend() {
 #endif
       };
       for (auto index: c10::irange(detail::getCUDAHooks().deviceCount())) {
-        if (!detail::getCUDAHooks().isGPUArch(index, archs)) {
+        if (!detail::getCUDAHooks().isGPUArch(archs, index)) {
           return false;
         }
       }
@@ -359,14 +359,14 @@ at::BlasBackend Context::blasPreferredBackend() {
       static const std::vector<std::string> archs = {
           "gfx90a", "gfx942",
 #if ROCM_VERSION >= 60300
-          "gfx1100", "gfx1101", "gfx1200", "gfx1201"
+          "gfx1100", "gfx1101", "gfx1200", "gfx1201",
 #endif
 #if ROCM_VERSION >= 60500
           "gfx950"
 #endif
       };
       for (auto index: c10::irange(detail::getCUDAHooks().deviceCount())) {
-        if (!detail::getCUDAHooks().isGPUArch(index, archs)) {
+        if (!detail::getCUDAHooks().isGPUArch(archs, index)) {
           TORCH_WARN_ONCE(
             "Attempting to use hipBLASLt on an unsupported architecture! "
             "Overriding blas backend to hipblas");
@@ -419,7 +419,7 @@ void Context::setROCmFAPreferredBackend(at::ROCmFABackend b) {
           "gfx90a",  "gfx942"
       };
       for (auto index: c10::irange(detail::getCUDAHooks().deviceCount())) {
-        if (!detail::getCUDAHooks().isGPUArch(index, archs)) {
+        if (!detail::getCUDAHooks().isGPUArch(archs, index)) {
           TORCH_WARN_ONCE(
             "Attempting to use CK on an unsupported architecture! Cannot set backend to CK");
           return true;
@@ -615,7 +615,7 @@ Allocator* getCPUAllocator() {
 //    means the allow_tf32 flags are overridden and tf32 is force disabled
 // override_allow_tf32_flag = false
 //    means the original allow_tf32 flags are followed
-thread_local bool override_allow_tf32_flag = false;
+thread_local static bool override_allow_tf32_flag = false;
 
 NoTF32Guard::NoTF32Guard() {
   if (!override_allow_tf32_flag) {
@@ -638,7 +638,7 @@ bool NoTF32Guard::should_disable_tf32() {
 // This information can be used, for example, to select implementations
 // with different numerical or performance characteristics.
 // See https://pytorch.org/docs/stable/notes/numerical_accuracy.html for details.
-thread_local bool rocm_is_backward_pass;
+thread_local static bool rocm_is_backward_pass;
 
 ROCmBackwardPassGuard::ROCmBackwardPassGuard() {
   rocm_is_backward_pass = true;
@@ -654,6 +654,20 @@ bool ROCmBackwardPassGuard::is_backward_pass() {
 
 bool Context::areVmapFallbackWarningsEnabled() const {
   return display_vmap_fallback_warnings_;
+}
+
+// Ops can query this flag to know they are in the backward pass.
+static thread_local bool a10_in_backward_pass;
+A10BackwardPassGuard::A10BackwardPassGuard() {
+  a10_in_backward_pass = true;
+}
+
+A10BackwardPassGuard::~A10BackwardPassGuard() {
+  a10_in_backward_pass = false;
+}
+
+bool A10BackwardPassGuard::is_in_backward_pass() {
+  return a10_in_backward_pass;
 }
 
 void Context::setDisplayVmapFallbackWarnings(bool enabled) {
@@ -694,7 +708,7 @@ void Context::setAllowFP16ReductionCPU(bool b) {
 #else
     if (true)
 #endif
-      throw std::runtime_error("Float16 arithmetic is not supported by the CPU!");
+      TORCH_CHECK(false, "Float16 arithmetic is not supported by the CPU!");
   }
   allow_fp16_reduction_cpu = b;
 }
